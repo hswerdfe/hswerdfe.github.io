@@ -1,5 +1,5 @@
 ---
-title: "Clustering of Tidy Tuesday Superbowl adds"
+title: "Clustering of Tidy Tuesday Superbowl ads"
 description: |
   A new post by hswerdfe
 author:
