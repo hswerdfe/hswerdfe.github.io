@@ -11,9 +11,26 @@
     ],
     "date": "2021-03-03",
     "categories": [],
-    "contents": "\r\n\r\n\r\n\r\n",
+    "contents": "\r\nfirst level header\r\nsome text\r\nseconde level header\r\nmore text\r\npictures\r\n\r\n\r\n\r\nreferences\r\n\r\n\r\n\r\n",
     "preview": {},
-    "last_modified": "2021-03-03T07:42:50-05:00",
-    "input_file": {}
+    "last_modified": "2021-03-03T08:36:45-05:00",
+    "input_file": "welcome.utf8.md"
+  },
+  {
+    "path": "posts/firstPost/",
+    "title": "Untitled",
+    "description": "A new article created using the Distill format.",
+    "author": [
+      {
+        "name": "Nora Jones",
+        "url": "https://example.com/norajones"
+      }
+    ],
+    "date": "2021-03-03",
+    "categories": [],
+    "contents": "\r\nDistill is a publication format for scientific and technical writing, native to the web.\r\nLearn more about using Distill for R Markdown at https://rstudio.github.io/distill.\r\n\r\n\r\n\r\n",
+    "preview": {},
+    "last_modified": "2021-03-03T08:38:34-05:00",
+    "input_file": "firstPost.utf8.md"
   }
 ]
