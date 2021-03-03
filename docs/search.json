@@ -6,14 +6,14 @@
       "description": "Some additional details about the blog",
       "author": [],
       "contents": "\r\n\r\n\r\n\r\n",
-      "last_modified": "2021-03-03T08:24:44-05:00"
+      "last_modified": "2021-03-03T08:40:17-05:00"
     },
     {
       "path": "index.html",
       "title": "hswerdfe - data - dodo",
       "author": [],
       "contents": "\r\n\r\n\r\n\r\n",
-      "last_modified": "2021-03-03T08:24:47-05:00"
+      "last_modified": "2021-03-03T08:40:19-05:00"
     }
   ],
   "collections": ["posts/posts.json"]
