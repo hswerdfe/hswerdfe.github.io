@@ -1,0 +1,120 @@
+---
+title: "Clustering of Tidy Tuesday Superbowl adds"
+description: |
+  A new post by hswerdfe
+author:
+  - name: Howard Swerdfeger
+    url: https://hswerdfe.github.io/docs/
+    affiliation: Data DoDo
+    affiliation_url: https://hswerdfe.github.io/docs/
+date: "`r Sys.Date()`"
+output: distill::distill_article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+## load libraries
+```{r, echo=TRUE}
+library(tidyverse)
+library(plotly)
+library(skimr)
+library(snakecase)
+library(janitor)
+library(broom)
+library(plotly)
+library(htmlwidgets)
+library(DT)
+
+#set the theme
+theme_set(theme_minimal())
+
+```
+
+
+
+
+## Read in the data 
+
+Read in and look at the data
+
+```{r, echo=TRUE}
+
+
+sb_raw <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-03-02/youtube.csv')
+skimr::skim(sb_raw)
+
+
+dat_ref <- "data from https://github.com/fivethirtyeight/superbowl-ads, via tidy tuesday"
+```
+## look at the data 
+
+
+```{r, echo=TRUE}
+sb_raw %>% sample_n(10)
+```
+
+# clean the data a little bit
+
+```{r, echo=TRUE}
+dat <- 
+  sb_raw %>% 
+  mutate_if(is.character, snakecase::to_sentence_case) %>% 
+  select(-favorite_count, -youtube_url) %>%
+  bind_cols(sb_raw["youtube_url"],. ) %>%
+  rename(key = youtube_url)
+ 
+
+dat %>% colnames()
+```
+
+
+
+```{r, echo=TRUE}
+dat_4_clust_2 <- 
+  dat_4_clust %>% 
+  select_if(function(x){is.logical(x) | is.numeric(x)})%>%
+  bind_cols(dat_4_clust["key"],.) %>% 
+  drop_na()
+
+
+kclusts <-
+  tibble(k = 1:12) %>%
+  mutate(
+    kclust = map(k, function(x){kmeans(x = select(dat_4_clust_2, -key), centers = x)})) %>% 
+  mutate(glanced = map(kclust, glance))
+
+
+kclusts %>%
+  unnest(cols = c(glanced)) %>%
+  ggplot(aes(k, tot.withinss)) +
+  geom_line(alpha = 0.5, size = 1.2) +
+  geom_point(size = 2) + 
+  labs(caption = dat_ref , title = "Guess at cluster count via elbo method", y = "Total Withiness", x = "number of clusters")
+```
+
+
+```{r, echo=TRUE}
+
+#best cluster ???
+final_clust <- kmeans(select(dat_4_clust_2, -key), centers = 7)
+
+
+p <-
+  augment(final_clust, dat_4_clust_2) %>%
+  left_join(dat %>% select(brand, key), by = "key") %>% 
+  ggplot(aes(dislike_count, like_count, fill = .cluster, name = brand)) +
+  geom_point(aes(size = view_count), shape = 21, color = "black") +
+  geom_text(aes(label  = brand), check_overlap = TRUE, hjust = "right") +
+  guides( fill = "none") + 
+  labs(title = "Clustering of NFL commercials", y = "likes (normalized)", x = "dislikes (normalized)", 
+       size = "views (normalized)",
+       caption = dat_ref )
+
+p
+
+```
+
+
