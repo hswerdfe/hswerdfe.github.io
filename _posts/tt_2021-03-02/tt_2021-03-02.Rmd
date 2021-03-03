@@ -71,8 +71,14 @@ dat %>% colnames()
 ```
 
 
+# Elbo method of guessing at clusters
 
 ```{r, echo=TRUE}
+dat_4_clust <- 
+  dat %>% 
+  mutate_if(is.numeric, function(x){(x+1) %>% log10() %>%  scale() }) %>% 
+  drop_na()
+
 dat_4_clust_2 <- 
   dat_4_clust %>% 
   select_if(function(x){is.logical(x) | is.numeric(x)})%>%
@@ -114,7 +120,8 @@ p <-
        caption = dat_ref )
 
 p
-
+#pp <- ggplotly(p)
+#pp
 ```
 
 
