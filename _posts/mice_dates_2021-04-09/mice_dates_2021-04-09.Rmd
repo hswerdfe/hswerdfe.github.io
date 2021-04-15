@@ -1,5 +1,5 @@
 ---
-title: "Mice for Imputation of observations With Consecutive Related Dates"
+title: "Mice for Imputation of Observations With Consecutive Related Dates"
 description: |
   A new post by hswerdfe
 author:
@@ -7,12 +7,13 @@ author:
     url: https://hswerdfe.github.io/docs/
     affiliation: Data DoDo
     affiliation_url: https://hswerdfe.github.io/docs/
-date: "`r Sys.Date()`"
+date: "2021-04-09"
 output: distill::distill_article
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev = 'svg')
 ```
 
 
@@ -47,6 +48,8 @@ library(lemon) # for table output
 library(ggpubr) #for ggarrange
 knit_print.data.frame <- lemon_print
 theme_set(theme_minimal())
+
+set.seed(as.integer(as.Date("2021-04-09")))
 ```
 
 ## Make some utility functions
@@ -81,16 +84,18 @@ sample_perlin <- function(x, size, replace = FALSE, ...,
 Create a single timeseries, that serves a the basis for the rest of the dataset.
 
 
-```{r, echo=TRUE}
+```{r, echo=TRUE, dev = 'svg'}
 n_rec = 10000
 s_dt = as.Date("2020-01-01")
 e_dt = as.Date("2021-01-01")
-dt_a <- sample_perlin(s_dt:e_dt, n_rec, replace = TRUE, frequency = 0.007) %>% as.Date(origin = as.Date("1970-01-01"))
+dt_a <- sample_perlin(s_dt:e_dt, n_rec, replace = TRUE, frequency = 0.007) %>% as.Date(origin = as.Date("1970-01-01")) %>% sort(
+  
+)
 
 
 tibble(dt_a) %>% 
   ggplot(aes(x = dt_a)) +
-  geom_density(color = "red") +
+  geom_density(color = "red", size = 1.5) +
   labs(title = "Density Plot of a base time series", x = "", y = "")
 ```
 
@@ -101,6 +106,9 @@ All other timeseries are base on the initial timeseries.
 We add factors in, but we don't really use them.
 
 ```{r , echo=TRUE,   caption="Observations Dates are always close to each other.",render=lemon_print}
+
+
+
 
 date_b <- dt_a + runif(n = n_rec, -7, +2) %>% round()
 date_c <- dt_a + runif(n = n_rec, -2, +7)%>% round()
@@ -126,19 +134,31 @@ dat_full %>% sample_n(7)
 
 ## Remove some values
 
+```{r  , echo=TRUE}
+remove_noise <- noise_perlin_1D_pos(n_rec, pertubation = 'fractal',  frequency = 0.0001) 
+
+
+remove_noise %>% 
+  tibble(value = ., index = 1:length(.)) %>%
+  ggplot(aes(y = value, x = index)) + geom_line(color = "blue", size = 1.5) +
+  theme_void() + 
+  labs(title = "Probability density of cell being removed")
+```
+
+
 Randomly remove some values, but importantly the removal is not uniform across the whole dataset. 
 
 Here the number removed is related to __size__ for example __date_b__ has about 1/3rd of its values removed.
 
 ```{r , echo=TRUE, out.width="100%",  caption="Some cells are hidden or set to NA.",render=lemon_print}
 
-date_b[sample_perlin(x = 1:n_rec, size = n_rec/3, frequency = 0.0001)] <- NA
-date_c[sample_perlin(x = 1:n_rec, size = n_rec/2, frequency = 0.0001)] <- NA
-date_d[sample_perlin(x = 1:n_rec, size = n_rec/5, frequency = 0.0001)] <- NA
-date_e[sample_perlin(x = 1:n_rec, size = n_rec/1.5, frequency = 0.0001)] <- NA
-date_f[sample_perlin(x = 1:n_rec, size = n_rec/5, frequency = 0.0001)] <- NA
-factor_a[sample_perlin(x = 1:n_rec, size = n_rec/3, frequency = 0.0001)] <- NA
-factor_b[sample_perlin(x = 1:n_rec, size = n_rec/3, frequency = 0.0001)] <- NA
+date_b[sample(x = 1:n_rec, size = n_rec/3, prob = remove_noise)] <- NA
+date_c[sample(x = 1:n_rec, size = n_rec/2, prob = remove_noise)] <- NA
+date_d[sample(x = 1:n_rec, size = n_rec/5, prob = remove_noise)] <- NA
+date_e[sample(x = 1:n_rec, size = n_rec/1.5, prob = remove_noise)] <- NA
+date_f[sample(x = 1:n_rec, size = n_rec/5, prob = remove_noise)] <- NA
+factor_a[sample(x = 1:n_rec, size = n_rec/3, prob = remove_noise)] <- NA
+factor_b[sample(x = 1:n_rec, size = n_rec/3, prob = remove_noise)] <- NA
 
 dat <- 
   tibble(
@@ -151,6 +171,10 @@ dat <-
 dat %>% sample_n(7)
 
 ```
+
+
+
+
 ### Compare missing with full data
 
 Then compare the full dataset to the dataset with values removed. Note how badly some of the timeseries are represented, with the removed data. One of the worst is __date_e__. This is mainly because we removed 2/3rds of the values.
@@ -166,7 +190,9 @@ dat_full %>% mutate(full = "Full Dataset")
   count(full, name, value) %>%
   filter(!is.na(value)) %>% 
   ggplot(aes(x = value, y = n, color = full)) + geom_line() + facet_wrap(vars(name)) + 
-  labs(title = "Example Dataset", subtitle = "some dates are removed", y = "Count of Data", x = "", color = "")
+  labs(title = "Example Dataset", subtitle = "some dates are removed", y = "Count of Data", x = "", color = "") +
+  theme(legend.position="bottom")
+
 
 ```
 ## Difference Between Dates
@@ -185,7 +211,7 @@ dat_full %>% mutate(full = "Full Dataset")
   labs(x = "Days between Dates `e` and and `c`")
 ```
 
-## Main Function
+## Main Imputation  Function
 
 Next is the main function to restore the data in a target date column. What this does:
 
@@ -288,7 +314,7 @@ fill_summarize_date_data <- function(
 
 ```
 
-### Predict
+### Imputation (Prediction)
 
 Next do the prediction, important values are __m__ and __maxit__ which are both passed to `mice`. if you are interested in the individual entries I recommend increasing `maxit` and possibly __m__, at the cost of run time.
 
@@ -325,7 +351,7 @@ dat_guess %>% select(date_e, date_e_guess) %>% rename(date_e_missing := date_e)
   sample_n(10)
 ```
 
-Looking at the distribution of errors in the guesses we see that there is little systemic error. if we are worried about individual observations then bringing in the standard deviation would be needed but looking at aggregate data requires less precision at the individual level. 
+Looking at the distribution of errors in the guesses we see that there is little systemic error. if we are worried about individual observations then bringing in the standard deviation would be needed but looking at aggregate data can require less precision at the individual level. 
 
 ```{r, echo=TRUE}
 bind_cols(
@@ -362,7 +388,11 @@ bind_rows(
   filter(!is.na(value)) %>%
   filter(grepl('date_e', type) ) %>% 
   ggplot(aes(x = value, y= n, color = type)) + geom_line() +
-  labs(title ="Comparison of full timeseries, missing and imputed timeseries", y = "Number of observations", x= "Date", color = "")
+  labs(title ="Comparison of full timeseries, missing and imputed timeseries", y = "Number of observations", x= "Date", color = "") +
+    theme(legend.position="bottom")
+
+
+
 ```
 
 
@@ -386,14 +416,22 @@ bind_rows(
   mutate(error_in_counts = date_e_full- date_e_guess_missing) %>%
   mutate(error_in_counts_percent = error_in_counts/date_e_full)
 
+
+dat_comb$error_in_counts %>% quantile(probs = c(0.1,0.25,0.5,0.75,0.90), na.rm = TRUE)
+
 p1 <-
 dat_comb %>%
   ggplot(aes(x = value, y = error_in_counts)) + geom_line() +
   labs(y ="Error between Actual counts and predicted counts", x = "Date", title = "Errors Look Random Which is Good.")
 p2 <-
 dat_comb %>% 
-  ggplot(aes(x = error_in_counts)) + geom_density(fill = "yellow", color = "black", alpha = 0.15) + geom_vline(xintercept = 0 , color = "Black", size = 1.5) +
+  ggplot(aes(x = error_in_counts)) + 
+  geom_density(fill = "yellow", color = "black", alpha = 0.15) + 
+  geom_vline(xintercept = 0 , color = "Black", size = 1.5) +
+  #geom_boxplot(fill = "yellow", color = "black", alpha = 0.15) + 
+  #geom_violin(fill = "yellow", color = "black", alpha = 0.15) + 
   labs(y = "Density", title = "Distribution Error in Count", x = "Count")
+
 
 ggarrange(p1, p2)
 
