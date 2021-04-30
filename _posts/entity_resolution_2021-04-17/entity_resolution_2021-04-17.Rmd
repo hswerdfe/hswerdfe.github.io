@@ -1,0 +1,780 @@
+---
+title: "Entity Resolution for Deduplication of data"
+description: |
+  A new post by hswerdfe
+author:
+  - name: Howard Swerdfeger
+    url: https://hswerdfe.github.io/docs/
+    affiliation: Data DoDo
+    affiliation_url: https://hswerdfe.github.io/docs/
+date: "2021-04-09"
+output: distill::distill_article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev = 'svg')
+
+```
+
+
+## Motivation
+
+Data quality sucks, and we have to match records togeather. 
+
+## Load Libraries
+
+
+```{r  echo=TRUE,  warning=FALSE, results='hide', message=FALSE}
+library(knitr)
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(fuzzyjoin) # for common mispellings
+#library(maps) # for city Names, but I don't want to override purrr:map
+library(babynames) # for first names
+library(lexicon) # for Last names
+library(reclin) # for de-duplication
+library(phonics) # for soundex
+library(plotROC) # for ROC curves
+library(AUC)# for AUC calculations curves
+library(magrittr) #extract2
+library(igraph) # Neigbourhood determination
+library(lemon)
+library(snakecase)
+theme_set(theme_minimal())
+knit_print.data.frame <- lemon_print
+
+set.seed(as.integer(as.Date("2021-04-09")))
+```
+
+## Generate Random Dataset
+
+
+```{r echo=TRUE}
+g_num_entities = 72
+g_num_dup_max = 12
+g_prob_error = 0.05
+g_prob_miss = 0.05
+```
+
+
+Generate a dataset with:
+
+* `r g_num_entities` people in it
+* each person will be duplicated between 1 and `r g_num_dup_max` times
+* each cell have a `r g_prob_miss` chance of being NA
+* each character in each string has a `r g_prob_error` chance of being altered
+ 
+
+## Some Utility Functions
+ 
+ 
+```{r echo=TRUE}
+#'
+#' get a single character out of a string
+#'
+#' s2c(i = 1, "data Doo Doo")
+s2c <- function(i, str, ...){
+  substr(x = str, start = i,stop =  i, ...)
+}
+
+#'
+#' change a string to a vector 
+#'
+#'example:
+#'  map_s2c("data Doo Doo")
+map_s2c<- function(str, ... ){
+  purrr::map(1:nchar(str), s2c, str = str, ...) %>% unlist()
+}
+
+
+#'
+#' Randomly edit some string
+#'
+#' random_edit("billy bob thorton")
+random_edit <- function(str, prob_char = g_prob_error, sub_in = letters){
+  if_else(
+    sample(x = c(T, F), size = nchar(str), prob = c(prob_char,1-prob_char), replace = TRUE),
+    sample(x = sub_in, size =  nchar(str)),
+    map_s2c(str)
+  ) %>% paste0(collapse = "")
+}
+
+
+
+#'
+#' Generate a base set of entities 
+#'
+#' generate_entities(10)
+generate_entities <- function(num_entities = g_num_entities, max_rep = g_num_dup_max){
+
+  dts_for_day_of_year = sample(seq(as.Date("1900-01-01"), as.Date("1901-12-31"),by = "day"), size = num_entities, replace = TRUE)
+
+    tibble(
+      first_name = 
+        babynames::babynames %>% 
+        group_by(name) %>% summarise(n = sum(n, na.rm = TRUE)) %>% 
+        sample_n(size = num_entities, replace = TRUE, weight = n) %>% 
+        pull(name),
+      middle_name = 
+        babynames::babynames %>% 
+        group_by(name) %>% summarise(n = sum(n, na.rm = TRUE)) %>% 
+        sample_n(size = num_entities, replace = TRUE, weight = n) %>% 
+        pull(name) ,     
+      last_name = 
+        lexicon::freq_last_names %>% 
+        clean_names() %>%
+        sample_n(size = num_entities, replace = TRUE, weight = prop) %>%
+        pull(surname),
+      city = 
+        maps::world.cities %>% 
+        clean_names() %>%
+        filter(country_etc =="USA") %>% 
+        sample_n(size = num_entities, replace = TRUE, weight = pop) %>% pull(name), 
+      dob_year = 
+        babynames::babynames  %>% 
+        group_by(year) %>% 
+        summarise(n = sum(n, na.rm = TRUE)) %>%
+        sample_n(size = num_entities, replace = TRUE, weight = n) %>% 
+        pull(year),
+      dob_month = month(dts_for_day_of_year),
+      dob_day = day(dts_for_day_of_year)
+    ) %>% 
+    mutate(dob = ISOdate(dob_year, dob_month, dob_day)) %>% 
+    #select(-dob_year, -dob_month, -dob_day) %>% 
+    mutate(., key = 1:nrow(.)) %>%
+    mutate(n = sample(1:max_rep, size = num_entities, replace = TRUE))  
+  
+}
+
+
+```
+
+
+
+## Create Sample dataset
+
+In this Dataset every record has a name a city and a date of birth. 
+
+Additionally it has a `key` we will use that later to figure out which record is which. 
+
+We also generate `n` which is how many times we will duplicate that record and make random edits to simulate noise.
+
+```{r}
+entities <- generate_entities()
+entities %>% sample_n(7)
+```
+
+
+## Noisy Data
+
+
+Make the data noisy, by making random edits to `r g_prob_error` and setting `r g_prob_miss` of  random cells to NA. notice how the names clearly don't look as clean.
+
+
+```{r}
+
+noisy <- 
+  entities %>% 
+  uncount(weights = n) %>% 
+  #select(-key) %>% 
+  #head(5000) %>% 
+  mutate(first_name = purrr::map(first_name, random_edit) %>% unlist()) %>%
+  mutate(middle_name = purrr::map(middle_name, random_edit) %>% unlist()) %>%  
+  mutate(last_name = purrr::map(last_name, random_edit) %>% unlist()) %>%
+  mutate(city = purrr::map(city, random_edit) %>% unlist()) %>% 
+  mutate(dob_year = purrr::map(dob_year, random_edit, sub_in = as.character(0:9)) %>% unlist() %>% as.integer()) %>%
+  mutate(dob_month = purrr::map(dob_month, random_edit, sub_in = as.character(1:12)) %>% unlist() %>% as.integer()) %>%
+  mutate(dob_day = purrr::map(dob_day, random_edit, sub_in = as.character(1:31)) %>% unlist() %>% as.integer()) %>%
+  mutate(dob = ISOdate(dob_year, dob_month, dob_day))   %>%
+  select(-dob_year, -dob_month, -dob_day) %>%
+  mutate(.,first_name = if_else(sample(x = c(T,F), size = nrow(.), replace = T, prob = c(g_prob_miss, 1-g_prob_miss)),
+                               as.character(NA), first_name)) %>%
+  mutate(.,last_name = if_else(sample(x = c(T,F), size = nrow(.), replace = T, prob = c(g_prob_miss, 1-g_prob_miss)),
+                                 as.character(NA), last_name)) %>%  
+  mutate(.,city = if_else(sample(x = c(T,F), size = nrow(.), replace = T, prob = c(g_prob_miss, 1-g_prob_miss)),
+                                as.character(NA), city)) %>%  
+   mutate(.,dob = if_else(sample(x = c(T,F), size = nrow(.), replace = T, prob = c(g_prob_miss, 1-g_prob_miss)),
+                          ISOdate(99, 99, 99), dob)) 
+
+noisy %>% sample_n(7)
+```
+## Look at duplicates of one key
+
+
+```{r}
+key_of_interest <-
+  noisy %>%
+  count(key, sort = T) %>%
+  slice(as.integer(g_num_entities/2)) %>%
+  pull(key)
+
+noisy %>%
+  filter(key == key_of_interest)
+```
+Each column will give us some indication that it is the same person, but each column by it self will not be enough to tell us, so we will look at multiple columns. There are various metrics we can look at 
+
+
+
+
+## Add soundex
+
+```{r}
+noisy <- 
+  noisy %>% 
+  select(-key, -dob) %>% 
+  mutate_all(phonics::soundex) %>% 
+  rename_all(~paste0(.x, "_soundex")) %>% 
+  bind_cols(noisy, .)
+
+noisy %>% sample_n(7)
+```
+
+# Pairs of values
+
+```{r}
+
+#columns to do comparisons on
+cols_4_simmilarity <- noisy %>% select(-key) %>% colnames()
+cols_4_simmilarity
+```
+
+
+
+
+## blocking 
+
+### blocking for any one variable is the same
+
+Blocking is how you limit the computational complexity of what you are doing, here I am blocking on any one variable being identical, which seems reasonable as every column could be wrong with some small probability. 
+
+```{r}
+  #
+  # blocking pairs with at least on cell, any cell identical
+  #
+p1 <- 
+  noisy %>% 
+  select(-key) %>% 
+  colnames() %>% 
+  map_dfr(~pair_blocking(noisy, noisy, blocking_var=.x, large = F))
+
+
+
+#
+# pairs with no blocking (this is much longer)
+#
+pa <- pair_blocking(x= noisy, y = noisy, large = F)
+
+
+#moving forward with any one column being same for computational reasons
+p <- pa#p1
+p
+```
+
+Above `p1` has `r nrow(p1)` rows, while `pa` has `r nrow(pa)` rows. this is on `r nrow(noisy)` records and `r nrow(entities)` people, and this discrepency gets larger as our number of records get larger.
+Here I am using `Pa` and `p1` for `potential` pairs
+
+
+```{r}
+#'
+#' Custom Date compare function
+#'
+date_comp <- function(date_part){
+    function(x, y) {
+        if (!missing(y)) {
+          if (date_part == "m"){
+            x %>% month() == y %>% month()
+          }else if(date_part == "d"){
+            x %>% day() == y %>% day()
+          }else if(date_part == "y"){
+            abs(x %>% year() - y %>% year())
+          }else{
+            0
+          }
+        }
+        else {
+            (x > threshold) & !is.na(x)
+        }
+    }
+}
+#date_comp
+```
+
+
+### similarty metrics
+
+We now have pairs to compare we look at how close individual cells in matching pairs are to each other, to do this we generate some comparisons.
+So here we generate 4 separate ways of comparing the strings across 3 different models. All the models will share `soundex` as a potential matching method. then each model will specialize in either `jaro winkler`, `Longest Common Substring`, or `Jaccard` simmilarity.
+
+
+```{r}
+
+#########################
+#soundex columns should be identical
+func_list_by_col <- 
+  list(first_name_soundex = identical(), 
+       middle_name_soundex = identical(),
+       last_name_soundex = identical(), 
+       city_soundex = identical())
+
+########################
+# The library does not seem to support multiple comparitors on the same column at the same time so we do this, for the next best thing
+default_comparator_list <- 
+  list(jw = jaro_winkler(), 
+       lcs = lcs(),
+       jaccard = jaccard()
+      )
+
+############################
+# generate similarities for all the matching pairs
+p_s <- 
+  default_comparator_list %>%
+  map(function(func){
+    compare_pairs(pairs = p, 
+                  by = cols_4_simmilarity,
+                  comparators = func_list_by_col,
+                  default_comparator = func)
+  })
+names(p_s) <- names(default_comparator_list)
+```
+
+### Observing the simmilarities
+ 
+
+Here we sample from the **pairs** with **similarities** `p_s` to see that we now have many numerical values indicating how close each `x` `y` pair is along various metrics, higher numbers in general mean more likely to be a match as does `TRUE` in the binary columns.
+
+
+
+```{r}
+ps_combined <- p_s %>% bind_rows(.id = 'model_name') 
+ps_combined %>% sample_n(5) %>% as_tibble()
+```
+
+## True Pairs
+
+### Summation (simplest possible)
+
+From here we try to go from potential pairs to true pairs. The easiest thing to do is sum across all the numeric columns, and say that higher number as more likely to be a match.
+
+```{r}
+
+###############################
+# add similarities
+p_s <- 
+  p_s %>% 
+  map(score_simsum, var = "simpl_sum")
+
+ps_combined <- p_s %>% bind_rows(.id = 'model_name') 
+ps_combined %>%
+  ggplot(aes(x = simpl_sum, color = model_name)) + 
+  geom_density() +
+  labs(color = "Model", x = "Total Simmilarity Score", y = "Density", title = "Density of total scores of potential pairs by model")
+```
+
+
+
+
+```{r}
+# default_comparator_list <- 
+#   list(jw = jaro_winkler(), 
+#        lcs = lcs(),
+#        jaccard = jaccard()
+#       )
+# p_s <- 
+#   default_comparator_list %>%
+#   map(function(func){
+#     compare_pairs(pairs = p, 
+#                   by = cols_4_simmilarity,
+#                   comparators = func_list_by_col,
+#                   default_comparator = func)
+#   })
+# names(p_s) <- names(default_comparator_list)
+```
+
+
+### EM algorithm 
+
+The EM Algorithm from the 2007 book `Data Quality and Record Linkage Techniques` generates the probability that each column contains information about weather the record pair is or is not a match
+
+```{r}
+em_s <- 
+  p_s %>% 
+  map(problink_em)
+em_s 
+```
+```{r}
+p_s <-
+  p_s %>% 
+  map(function(p_i){
+    score_problink(p_i, var = "em_weight")
+  })    
+
+
+ps_combined <- p_s %>% bind_rows(.id = 'model_name') 
+ps_combined %>%
+  ggplot(aes(x = em_weight, color = model_name)) + 
+  geom_density() +
+  labs(color = "Model", x = "EM Weight Score", y = "Density", title = "Density of total scores of potential pairs by model")
+```
+
+## results and metrics
+
+Generate a results the `is_same` column tells us if they are truely from the same person.
+
+```{r}
+p_results <- 
+  map2_dfr(names(p_s), p_s, function(nm, p){
+    p$def_func = nm
+    p %>% as_tibble()
+  }) 
+
+noisy_kr <- 
+  noisy %>% 
+  mutate(., row = 1:nrow(.)) %>% 
+  select("key", "row")
+
+p_results <- 
+  p_results %>% 
+  left_join(noisy_kr %>% set_names(c("key_x", "x")), by = "x") %>% 
+  left_join(noisy_kr %>% set_names(c("key_y", "y")), by = "y")  %>% 
+  mutate(is_same = key_x == key_y)
+p_results %>% summary()
+
+p_results
+```
+
+```{r}
+p_results %>% 
+  select(-x, -y) %>% 
+  mutate_if(is.logical, as.double) %>% 
+  pivot_longer(!def_func) %>%
+  mutate(def_func = if_else(grepl("soundex",name), "soundex", def_func)) %>% 
+  mutate(name = if_else(grepl("soundex",name), gsub("_soundex", "", name), name)) %>% 
+  filter(!name %in% c('key_x','key_y','is_same')) %>% 
+  #mutate(name = snakecase::to_title_case(name)) %>% 
+  ggplot(aes(x = value, color = def_func)) + 
+  geom_density() + 
+#  facet_grid(cols = vars(name), rows = vars(def_func),  scales = "free")
+  facet_wrap(~ name, scales = "free") + 
+  labs(color = "model", title = "similarity metrics distribution across each column and each model")
+```
+
+
+
+
+
+```{r}
+p_results %>% 
+  select(simpl_sum, em_weight, def_func, is_same) %>%
+  pivot_longer(., cols=c("simpl_sum", "em_weight")) %>% 
+  mutate(mdl_nm = paste0(def_func, "_", name )) 
+```
+
+
+
+# Look at Model Results
+
+
+Looking at the model results from the ROC perspective I can say, that clearly I did not make this problem hard enough, and well I am evaluating on my training set. Moving one
+
+
+```{r}
+p_results %>% 
+  select(simpl_sum, em_weight, def_func, is_same) %>%
+  pivot_longer(., cols=c("simpl_sum", "em_weight")) %>% 
+  mutate(mdl_nm = paste0(def_func, "_", name )) %>%
+  group_by(mdl_nm) %>% 
+  mutate(auc = AUC::auc(AUC::roc(value , as.factor(is_same)))) %>% 
+  ungroup() %>% 
+  mutate(mdl_nm = paste0("(", round(auc, 5), ") ", mdl_nm )) %>%
+  mutate(mdl_nm = fct_reorder(mdl_nm, auc)) %>%
+  ggplot(aes(d = is_same, m = value, color = mdl_nm)) + 
+  geom_roc(n.cuts = 10) + 
+  style_roc() + 
+  labs()
+```
+
+###Select Best Model
+
+```{r}
+p_results %>% 
+  select(simpl_sum, em_weight, def_func, is_same) %>%
+  pivot_longer(., cols=c("simpl_sum", "em_weight")) %>% 
+  mutate(mdl_nm = paste0(def_func, "_", name )) %>%
+  group_by(mdl_nm) %>% 
+  mutate(auc = AUC::auc(AUC::roc(value , as.factor(is_same)))) %>% 
+  ungroup() %>% 
+  mutate(mdl_nm = paste0("(", auc, ") ", mdl_nm )) %>%
+  mutate(mdl_nm = fct_reorder(mdl_nm, auc)) %>%
+  filter(auc == max(auc)) %>%
+  ggplot(aes(d = is_same, m = value, color = mdl_nm)) + 
+  geom_roc(n.cuts = 20) + 
+  style_roc() + 
+  labs()
+```
+
+
+```{r}
+best_model_results <- 
+  p_results %>% 
+  select(simpl_sum, em_weight, def_func, is_same, x, y) %>%
+  pivot_longer(., cols=c("simpl_sum", "em_weight")) %>% 
+  mutate(mdl_nm = paste0(def_func, "_", name )) %>%
+  group_by(mdl_nm) %>% 
+  mutate(auc = AUC::auc(AUC::roc(value , as.factor(is_same)))) %>% 
+  ungroup() %>% 
+  filter(auc == max(auc)) 
+best_model_results
+```
+
+
+### 
+
+Another way of looking at the data
+```{r}
+cut_quantiles <- function(x, by = 0.02) {
+  cut(x, breaks=unique(c(quantile(x, probs = seq(0, 1, by = by)))), 
+      #labels=c("0-20","20-40","40-60","60-80","80-100"), 
+      include.lowest=TRUE)
+}
+```
+
+
+```{r}
+best_model_results %>%
+  mutate(value_cut = cut_quantiles(value)) %>% 
+  group_by(value_cut, is_same) %>%
+  summarise(n = n()) %>% ungroup() %>%
+  group_by(value_cut) %>% mutate(f = n/sum(n)) %>% ungroup() %>% 
+  ggplot(aes(x = value_cut, y = f, fill = is_same)) + geom_col() + coord_flip()
+```
+
+
+# select Threshold
+
+```{r}
+best_model_results %>% 
+arrange(value) %>% 
+mutate(f_cumsum_true=cumsum(is_same)/sum(is_same)) %>% 
+mutate(f_cumsum_false=cumsum(!is_same)/sum(!is_same)) %>% 
+rename(score:=value,
+       score_typ:=name) %>%
+pivot_longer(cols = c(f_cumsum_true, f_cumsum_false)) %>%
+ggplot(aes(x=score, y=value, color= name)) + geom_line()
+```
+```{r}
+Threshold <- 
+  best_model_results %>% 
+  arrange(value) %>% 
+  mutate(f_cumsum_true=cumsum(is_same)/sum(is_same)) %>% 
+  mutate(f_cumsum_false=cumsum(!is_same)/sum(!is_same)) %>%
+  arrange(abs(f_cumsum_false - 0.9995)) %>%
+  slice(1) %>% pull(value)
+Threshold
+```
+```{r}
+Threshold2 <- 
+  best_model_results %>% 
+  arrange(value) %>% 
+  mutate(f_cumsum_true=cumsum(is_same)/sum(is_same)) %>% 
+  mutate(f_cumsum_false=cumsum(!is_same)/sum(!is_same)) %>%
+  arrange(abs(f_cumsum_true - 0.75)) %>%
+  slice(1) %>% pull(value)
+Threshold2
+```
+# Make the Graph of duplicates
+
+ * Each node is a record
+ * Each edge is a duplicate as determined by the winning model and threashold
+
+
+```{r}
+
+Threshold
+
+
+g <- make_empty_graph(n = 0, directed=FALSE) +
+    vertices(paste0("N_",1:nrow(noisy)))
+
+
+edges_vector <- 
+  best_model_results %>% 
+  filter(value >= Threshold) %>% 
+  #filter(x != y) %>% 
+  select(x, y) %>% #head(5) %>% 
+  pmap(function(x, y){
+    c(x,y)
+  }) %>% unlist()
+
+#edges_vector
+gorder(g) %>% print()
+gsize(g) %>% print()
+#g
+```
+```{r}
+g<-add_edges(g, edges_vector)
+gorder(g) %>% print()
+gsize(g) %>% print()
+g
+```
+
+# Get disconected components of graph
+
+```{r}
+g_s <- decompose.graph(g)
+gi <- 
+  g_s %>%
+  sample(x = ., size=1) %>% 
+  extract2(1) 
+print(length(g_s))
+print(gi)
+```
+
+
+
+```{r}
+gwithn <- tibble(g=as.character(), n_nm=as.character(), n = as.integer())
+
+for (i in 1:length(g_s)){
+  g_nm = paste0("g_",i)
+  #print(g_nm)
+  g_i <- as_ids(V(g_s[[i]]))
+  for (i_n in g_i){
+    gwithn <- 
+      gwithn %>% add_row(g = g_nm, n_nm = i_n, n = as.integer(gsub(x=i_n, pattern="N_", replacement="")))
+    #print()
+  }
+  
+}
+gwithn <- gwithn %>% distinct()
+gwithn
+```
+
+
+Above `g` is a group of records that are a person and `n_nm`is a record. For the fully disconnected graph we have predicted there to be `r gwithn %>% distinct(g) %>% nrow()` distinct people in `r nrow(noisy)` records. when there are in fact `nrow(entities)` people in the origional dataset
+
+# based on community ratther then fully disconnnected
+
+
+```{r}
+gwithn <- tibble(g=as.character(), n_nm=as.character(), n = as.integer())
+
+g_c <- fastgreedy.community(simplify(as.undirected(g)))
+walk(1:length(g_c), function(i_c){
+  ig <- g_c[[i_c]]
+  #print(i_c)
+  g_nm = paste0("g_", i_c)
+  walk(1:length(ig), function(i_n){
+    #print(ig[[i_n]])
+    n_nm <- ig[[i_n]]
+    gwithn <<- 
+      gwithn %>% add_row(g = g_nm, 
+                         n_nm = n_nm, 
+                         n = as.integer(gsub(x=n_nm, pattern="N_", replacement=""))
+                         )
+  })
+})
+gwithn
+```
+
+For the community algorithm `r gwithn %>% distinct(g) %>% nrow()` distinct people in `r nrow(noisy)` records. when there are in fact `nrow(entities)` people in the origional dataset
+
+
+
+# plot one random component
+
+
+```{r}
+plot(gi)
+```
+
+
+
+# Plot Whole Graph
+
+
+```{r}
+plot(g)
+```
+# Extract df of sub_graph with Node
+
+So now we will summarize the data for later in a data frame.
+
+
+```{r}
+most_common_names_concat <- function(x, sep = "; ", n = 2){
+    x = as.character(x)
+    n2 = min(n, length(x))
+    tmp <- sort(table(x),decreasing=T)[1:n2] 
+    paste0(names(tmp), "(",tmp, ")") %>%  paste0(collapse=sep)
+}
+most_common_names_vector <- function(x, n = 2){
+  n2 = min(n, length(x))
+  tmp <- sort(table(x),decreasing=T)[1:n2] 
+  tmp2 <- as_tibble(tmp) 
+  tmp_l <- as.list(tmp2$n)
+  names(tmp_l) <- tmp2$x
+  tmp_l
+}
+unique_list <- function(x){
+  x %>% table() %>% sort(decreasing=T) %>% names() %>% list()
+}
+concat_vect_remove <- function(x, sep = "; "){
+  x_u <- x %>% unique()
+  x_u <- x_u[!is.na(x_u)]
+  paste0(x_u, collapse=sep)
+}
+count_unique <-function(x){
+  x_u <- x %>% unique() 
+  x_u <- x_u[!is.na(x_u)]
+  length(x_u)
+}
+
+```
+
+
+## Summarize
+
+Now we know all the miss-spellings of each persons names.
+
+
+```{r}
+de_noised <- 
+  noisy %>%
+  mutate(., n = 1:nrow(.)) %>% 
+  left_join(gwithn, by = "n") %>%
+  group_by(g) %>%
+  summarise(n = n(), 
+           first_name = unique_list(first_name),
+           last_name = unique_list(last_name),
+           city = unique_list(city),
+           dob = unique_list(dob),
+           key_n = n_distinct(key),
+           key = unique_list(key)#,
+           #key = most_common_names_concat(key)
+           ) %>% ungroup()%>%
+            arrange(desc(key_n)) 
+
+de_noised
+```
+
+
+
+
+
+# Conclusion
+
+__Make a form with validation checks!__ ... Please...
+
+
+
+
+# sessionInfo
+
+```{r}
+print(R.version.string)
+sessionInfo(package = NULL)
+
+```
+
