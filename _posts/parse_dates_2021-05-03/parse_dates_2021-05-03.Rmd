@@ -1,0 +1,166 @@
+---
+title: "Date Parsing, using auxilary information."
+description: |
+  A new post by hswerdfe
+author:
+  - name: Howard Swerdfeger
+    url: https://hswerdfe.github.io/docs/
+    affiliation: Data DoDo
+    affiliation_url: https://hswerdfe.github.io/docs/
+date: "2021-05-03"
+output: distill::distill_article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev = 'svg')
+
+```
+
+
+## Motivation
+
+I was given a directory of 3000+ csv files, provided by 50+ different organizations, and compiled by staff that was making near minimum wage. these files were supposed to have 3 date fields in them, but the format of the date fields was incredibly inconsistent between organizations, within organizations, even within the same csv file they were inconsistent.  The only consistency I could find was that a single column in a single file was typically consistent.
+
+While a parsing a single date like **04/02/09** may be inconsistent typically if you have a vector of dates all in the same format like, **04/02/09, 05/13/08, 03/17/99**  the date format becomes obvious.
+
+also when combined with some known business rule like 
+ 
+ * Dates can not be inte future
+ * Dates are most likely to be in the last 2 weeks
+ * Dates are unlikely to be more than 115 years
+
+In this blog I show how to leverage all the information in a vector of dates to parse the rest of the dates.
+
+## Load Libraries
+
+
+```{r  echo=TRUE,  warning=FALSE, results='hide', message=FALSE}
+library(knitr)
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(lemon)
+
+
+theme_set(theme_minimal())
+knit_print.data.frame <- lemon_print
+
+set.seed(as.integer(as.Date("2021-05-03")))
+```
+
+
+```{r}
+
+#######################
+# Install from github
+remotes::install_github("hswerdfe/VectorParseDate")
+
+
+
+#######################
+# library load
+library(VectorParseDate)
+```
+
+
+
+
+# Example (an easy dataset)
+
+None of these dates are ambiguous 
+
+
+```{r}
+org_dts = as.Date(sample( as.numeric(as.Date('2015-01-13')): as.numeric(as.Date('2015-01-31')), 5, replace = T), origin = '1970-01-01')
+dts_ymd <- format(org_dts, "%Y-%m-%d")
+dts_dmy <- format(org_dts, "%d/%m/%Y")
+dts_mdy <- format(org_dts, "%m/%d/%Y")
+print(dts_ymd)
+print(dts_dmy)
+print(dts_mdy)
+```
+
+### All three formats parse to the same dates without telling the library what the format is
+
+```{r}
+vector_parse_dates(dts_ymd)
+```
+```{r}
+vector_parse_dates(dts_dmy)
+```
+```{r}
+vector_parse_dates(dts_mdy)
+```
+
+
+
+
+
+
+# Example (use buisness logic)
+
+In theory these dates are easy to parse
+
+```{r}
+dts <- format(as.Date(sample( as.numeric(as.Date('2035-01-13')): as.numeric(as.Date('2035-01-31')), 5, replace = T), origin = '1970-01-01'), "%Y-%m-%d")
+dts
+```
+However by default `VectorParseDate` assumes some buisness logic:
+
+ * Dates from the future are impossible
+ * All dates in the past are equally likely
+ 
+ This is controlled through the optional parameter `check_func` this needs to be a function that takes a date and returns an integer, where lower number indicate lower probabilities and higher are higher.
+
+
+```{r}
+vector_parse_dates(dts)
+```
+`vector_parse_date_usually_true` always returns `TRUE` as according to it all dates are equally likely
+
+```{r}
+vector_parse_dates(dts, check_func = vector_parse_date_usually_true)
+```
+
+## Example (multiple formats are possible)
+
+most but not all of these dates are ambiguous and could be `ymd` or `ydm`
+
+```{r}
+dts <- format(as.Date(sample( as.numeric(as.Date('2020-07-01')): as.numeric(as.Date('2020-07-13')), 35, replace = T), origin = '1970-01-01'), "%Y/%m/%d")
+dts
+```
+We see this with the `vector_parse_success_grid` function.
+
+```{r}
+vector_parse_success_grid(dts)
+```
+we see this with the `vector_parse_success_rates` function.
+
+```{r}
+vector_parse_success_rates(dts)
+```
+
+
+```{r}
+vector_parse_dates(dts)
+
+```
+
+
+# Conclusion
+
+Dates are often ambiguous in isolation, but they are rarely ambiguous when considering each other and business logic. 
+
+
+
+
+# sessionInfo
+
+```{r}
+print(R.version.string)
+sessionInfo(package = NULL)
+
+```
+
