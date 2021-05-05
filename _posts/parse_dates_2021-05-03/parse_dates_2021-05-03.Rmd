@@ -8,7 +8,8 @@ author:
     affiliation: Data DoDo
     affiliation_url: https://hswerdfe.github.io/docs/
 date: "2021-05-03"
-output: distill::distill_article
+output: 
+  rmdformats::readthedown
 ---
 
 ```{r setup, include=FALSE}
