@@ -18,6 +18,10 @@ editor_options:
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
+```{r, out.width="25%"}
+knitr::include_graphics("img/cansim-sticker.png")
+```
+
 
 ```{r share_top}
 library(magrittr)
