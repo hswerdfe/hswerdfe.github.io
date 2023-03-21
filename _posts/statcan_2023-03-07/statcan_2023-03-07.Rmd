@@ -1,0 +1,306 @@
+---
+title: "CanSim Package Introduction"
+description: |
+  A new post by hswerdfe
+author:
+  - name: Howard Swerdfeger
+    url: https://hswerdfe.github.io/docs/
+link:
+  - name: Howard Swerdfeger
+    url: https://hswerdfe.github.io/docs/
+date: "`r Sys.Date()`"
+output: distill::distill_article
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r share_top}
+library(magrittr)
+library(ggrepel)
+library(plotly)
+library(tidyverse)
+
+source('../share.R')
+
+htmltools::p('Share on, ',
+share_img(glue_url = share_df$glue_url, image = share_df$img, title = share_df$alt) |>
+  htmltools::span())
+```
+
+
+StatsCan releases a [Ton of data tables](https://www150.statcan.gc.ca/n1/en/type/data), which are readily available and easy to download. In the **R** world the [cansim](https://cloud.r-project.org/web/packages/cansim/index.html) package can be used a wrapper around these data.
+
+
+Firstly the cansim package can be installed with:
+
+```{r install_package, eval = FALSE, echo=TRUE}
+ install.packages('cansim')
+```
+
+Then Loaded with: 
+
+```{r library_load, echo=TRUE}
+library(cansim)
+```
+
+```{r}
+search_term <- 'farm income'
+```
+
+
+Once Loaded we can find a data table of interest by searching the data table of interest by keyword. In this case we use **`r search_term`** :
+
+```{r, echo=TRUE}
+search_result <- 
+  cansim::search_cansim_cubes(search_term) |>
+  dplyr::mutate(date_length  = difftime(cubeEndDate,cubeStartDate )) |> 
+  dplyr::filter(cubeEndDate > '2020-01-01') |> 
+  dplyr::arrange(dplyr::desc(date_length)) 
+
+
+cansimId <- search_result$cansimId[[1]]
+
+search_result |> 
+  utils::head(1) |>
+  dplyr::mutate_all(as.character)  |> 
+  tidyr::pivot_longer(tidyr::everything())  |> 
+  kableExtra::kable()
+
+
+
+```
+
+Using the Cansim ID given **`r cansimId`** we can Meta Information about the data table with :
+
+
+```{r, echo=TRUE}
+
+
+
+meta_raw <- cansim::get_cansim_cube_metadata(cansimId) |> janitor::clean_names()
+
+meta_raw |> 
+  utils::head(1) |>
+  dplyr::mutate_all(as.character)  |> 
+  tidyr::pivot_longer(tidyr::everything())  |> 
+  kableExtra::kable()
+```
+
+
+
+And the actual data with:
+
+```{r, echo = TRUE}
+
+
+
+dat_raw <- cansim::get_cansim(cansimId) |> 
+  janitor::clean_names()
+
+dat <- 
+  dat_raw %>% 
+  dplyr::mutate_if(~(purrr::is_character(.) & dplyr::n_distinct(.) <=50), as.factor)
+
+skimr::skim(dat)
+
+
+```
+
+
+We can see that there are several **Income Components** that we can look at:
+
+```{r, echo = TRUE}
+  dat |>
+  count(hierarchy_for_income_components, income_components) |>
+  tidyr::separate(col = hierarchy_for_income_components, into = paste0('h_', 1:3), convert = TRUE, remove  = FALSE) |>
+  select(-n) |> 
+  rename(Hierarchy := hierarchy_for_income_components) |>
+  dplyr::arrange(h_1, h_2, h_3) |> 
+  kableExtra::kable()
+```
+
+
+We can easily look at the time series of **Value of inventory change**
+
+```{r, echo = TRUE, out.width="800px", out.height="1500px"}
+
+p_d <- 
+  dat |>
+  dplyr::filter(geo == 'Canada') |>
+  dplyr::select(date, income_components, value, hierarchy_for_income_components) |>
+  #dplyr::count(hierarchy_for_income_components, income_components)
+  tidyr::separate(col = hierarchy_for_income_components, into = paste0('h_', 1:3), convert = TRUE) |>
+  dplyr::arrange(date, h_1, h_2, h_3) |>
+  dplyr::filter(h_1 == 2) #|>
+  #dplyr::filter(is.na(h_3)) 
+
+
+theme_set(theme_minimal() +   
+        theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        plot.title=element_text(size=25, hjust=0.5, face="bold", colour="grey", vjust=-1),
+        plot.subtitle = element_text(size=15, hjust=0.5, face="bold", colour="grey", vjust=-1),        
+        plot.caption =element_text(size=18, hjust=0.5, face="italic", color="black")
+        ))
+
+
+p_d_ends <- 
+  p_d |> 
+  group_by(income_components) |>
+  #filter(date == max(date) | date == min(date) | value == min(value) | value == max(value))  |>
+  filter(date == max(date) | date == min(date) )  |>
+  mutate(lbl = glue::glue('{date}\n${format(round(value),  big.mark   = ",", digits = 3)}'))
+  #mutate(lbl = glue::glue('{income_components}\n{date}\n${format(round(value),  big.mark = ",", digits = 3)}'))
+
+
+mid_range_value <- function(x){
+  mean(c(max(x), min(x)))
+}
+
+p_d_lbl <- 
+  p_d |> 
+  group_by(income_components) |>
+  summarise(value = mid_range_value(value), date = mid_range_value(date))
+  
+p_d_hline <- 
+  p_d |> 
+  group_by(income_components) |>
+  filter(max(value) > 0 & min(value) < 0) |>
+  ungroup()
+
+
+p <- 
+  p_d |> 
+  ggplot(aes(x = date, y = value, color = income_components)) +
+  geom_text(data = p_d_lbl, mapping = aes(label = income_components), alpha = 0.5, size = 7) +
+  geom_point() +
+  geom_smooth() +
+  geom_text(data = p_d_ends, mapping = aes(label = lbl, fill = income_components), alpha = 0.5) +
+  #ggplot2::scale_y_log10(labels = scales::dollar_format(prefix="$")) +
+  #ggplot2::scale_x_continuous() + 
+  ggplot2::scale_x_date(date_breaks = '10 year', date_labels = '%Y') +
+  ggplot2::guides(color = FALSE, fill= FALSE) +
+  ggplot2::geom_hline(data = p_d_hline, mapping = aes(yintercept = 0), color = 'red', linetype = "dashed") +
+  ggplot2::facet_wrap(~income_components, scales = 'free_y', ncol = 1) +
+  labs(x = '', y = '', title = meta_raw$cube_title_en) +
+  theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank()
+  )
+#p
+ggplotly(p)
+```
+
+
+
+We do a quick search for a **income_components** that has a large geographical variation we find
+
+```{r, echo = TRUE}
+ 
+simple_models <- 
+  dat |> 
+  group_by(income_components, geo) |> 
+  group_modify(~ broom::tidy(lm(value ~ date, data = .x))) |>
+  filter(term == 'date') |>
+  ungroup() 
+
+
+variation_across_geo <-
+  simple_models |> 
+  group_by(income_components) |> 
+  summarise(estimate_sd = sd(estimate),
+            estimate_rng = max(estimate)- min(estimate)) |> 
+  arrange(desc(estimate_sd))
+
+
+variation_across_geo |>
+    kableExtra::kable()
+```
+
+
+Take the measurement with the most difference  deviation across **geo** codes, this would be **`r variation_across_geo |> head(1) |> pull(income_components)`**
+
+```{r, echo = TRUE}
+library(geofacet)
+income_components_curr <- variation_across_geo |> head(1) |> pull(income_components)
+
+geo_est <- 
+  simple_models |>
+  filter(income_components == income_components_curr) |>
+  select(geo, estimate) |>
+  arrange(desc(estimate))
+  
+
+
+
+p_d <- 
+  dat |>
+  filter(income_components == income_components_curr) |>
+  select(date, income_components, value, geo) |>
+  left_join(geo_est, by = join_by(geo)) |>
+  filter(geo != 'Canada')  |>
+  mutate(geo = fct_reorder(geo, -estimate)) 
+
+
+  
+
+
+p_d_lbl <- 
+  p_d |> 
+  group_by(geo) |>
+  summarise(value = mid_range_value(value), date = mid_range_value(date), estimate = unique(estimate)) |>
+  left_join(
+          ca_prov_grid1 |>
+          mutate(name = factor(x = name,levels = levels(p_d$geo))) |> 
+          as_tibble() |>
+          filter(!is.na(name)), 
+          by = join_by(geo == name )
+        ) |>
+  mutate(lbl = code)
+  #mutate(lbl = paste0(code, '(', round(estimate, 0),')'))
+
+  
+
+
+
+p_d_ends <- 
+  p_d |> 
+  group_by(geo) |>
+  #filter(date == max(date) | date == min(date) | value == min(value) | value == max(value))  |>
+  filter(date == max(date) | date == min(date) )  |>
+  mutate(lbl = glue::glue('{date}\n${format(round(value),  big.mark   = ",", digits = 3)}'))
+  #mutate(lbl = glue::glue('{income_components}\n{date}\n${format(round(value),  big.mark = ",", digits = 3)}'))
+
+
+p <- 
+p_d |> 
+  ggplot(aes(x = date, y = value, color = geo)) +
+  geom_point() + 
+  geom_smooth() + 
+  geom_text(data = p_d_lbl, mapping = aes(label = lbl), alpha = 0.5, size = 12) +
+  geom_text(data = p_d_ends, mapping = aes(label = lbl), alpha = 0.5) +
+  # facet_geo(~ geo, 
+  #           grid = "ca_prov_grid1"#, 
+  #           #scales = 'free_y' 
+  #           ) +
+  facet_wrap(
+    ~ geo, ncol = 3
+  ) +
+  guides(fill= FALSE, color = FALSE) +
+  labs(x='', y = '', title = income_components_curr) +
+  theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank()
+  )
+
+ggplotly(p)
+```
+
+
