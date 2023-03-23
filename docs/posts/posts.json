@@ -1,5 +1,22 @@
 [
   {
+    "path": "posts/tt_2023-03-21/",
+    "title": "Tidy Tuesday dataset on programming languages",
+    "description": "A new post by hswerdfe",
+    "author": [
+      {
+        "name": "Howard Swerdfeger",
+        "url": "https://hswerdfe.github.io/docs/"
+      }
+    ],
+    "date": "2023-03-22",
+    "categories": [],
+    "contents": "\r\n\r\n\r\n\r\n\r\n\r\nShare on, \r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\nJust playing around with todays Tidy Tuesday dataset:\r\nLoad the Data\r\n\r\n\r\nlanguages <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-03-21/languages.csv')\r\n\r\n\r\nSet some Theme stuff\r\n\r\n\r\n\r\nSimple Bar Plot\r\n\r\n\r\np_dat <- \r\n  languages |> \r\n  #count(pldb_id , sort = TRUE) |> \r\n  select(pldb_id, title, github_language_repos, github_language_type) |> \r\n  filter(!is.na(github_language_repos)) |>\r\n  group_by(github_language_type) |> \r\n  mutate(pldb_id = fct_reorder(pldb_id, github_language_repos)) |> \r\n  mutate(pldb_id = fct_lump(pldb_id, n =9, w = github_language_repos)) |> \r\n  #ungroup() |> count()\r\n  group_by(github_language_type, pldb_id) |> \r\n  summarise(github_language_repos = sum(github_language_repos)) |> \r\n  mutate(lbl = glue::glue('{pldb_id} ({str_squish(format(github_language_repos, big.mark = \",\"))})'))\r\n\r\np_dat_facet <- \r\n  p_dat |> \r\n  group_by(github_language_type) |> \r\n  summarise(github_language_repos_sum  = sum(github_language_repos),\r\n            github_language_repos = max(github_language_repos)/2) |> \r\n  mutate(lbl = glue::glue('{github_language_type}\\n({str_squish(format(round(github_language_repos), big.mark = \",\"))})'))\r\n\r\np_dat |> \r\n  ggplot(aes(x = github_language_repos, y = pldb_id, fill = github_language_type, color = github_language_type)) +\r\n  facet_wrap(~ github_language_type, scales = 'free', ncol = 1) + \r\n  geom_text(aes(label = lbl), x = 0, hjust  = 'left', color = 'black') +\r\n  geom_text(data = p_dat_facet, mapping = aes(label = lbl, x = github_language_repos), y = 5,  alpha = 0.5, size = 10) +\r\n  geom_col(alpha = 0.25) +\r\n  guides(fill =  'none', color = 'none') +\r\n  labs(title = 'Most Popular Languages', subtitle = 'by Language Type (as measured by github repos)', x = '', y = '') +\r\n  theme(panel.grid.major = element_blank(), \r\n        panel.grid.minor = element_blank(),\r\n        axis.text.x=element_blank(),\r\n        axis.text.y=element_blank(),\r\n        plot.title=element_text(size=25, hjust=0.5, face=\"bold\", colour=\"grey\", vjust=-1),\r\n        plot.subtitle = element_text(size=15, hjust=0.5, face=\"bold\", colour=\"grey\", vjust=-1),        \r\n        plot.caption =element_text(size=18, hjust=0.5, face=\"italic\", color=\"black\"),\r\n        strip.text = element_blank()\r\n        )\r\n\r\n\r\n\r\nX-Y plot of jobs vs users, and things “I know”\r\n\r\n\r\nI_know_well <- c('Python','R','SQL', 'SQLite', 'PostgreSQL')\r\nhave_worked_with <- c('Java', 'Visual Basic','Fortran', 'C','C++', 'Perl', 'MySQL','Microsoft SQL Server','XML','JSON', 'JavaScript')\r\n\r\np <-\r\nlanguages |> \r\n  select(title, number_of_jobs, number_of_users) |> \r\n  #filter(str_detect(title,regex('java', ignore_case = TRUE)))\r\n  mutate(I_know = title %in% c(I_know_well, have_worked_with) ) |> \r\n  ggplot(aes(x = number_of_jobs, y = number_of_users, label = title, color = I_know)) +\r\n  geom_point() +\r\n  labs(x = 'Number of Jobs (log scale)', y = 'Number of Users (log scale)', color = 'hswerdfe Knows') +\r\n  scale_x_log10() +  \r\n  scale_y_log10()\r\n  \r\n  \r\n\r\nggplotly(p)\r\n\r\n\r\n\r\n\r\n\r\n\r\n",
+    "preview": "posts/tt_2023-03-21/distill-preview.png",
+    "last_modified": "2023-03-23T10:39:45-04:00",
+    "input_file": {}
+  },
+  {
     "path": "posts/statcan_2023-03-07/",
     "title": "CanSim Package Introduction",
     "description": "A new post by hswerdfe",

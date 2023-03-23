@@ -1,0 +1,128 @@
+---
+title: "Tidy Tuesday dataset on programming languages"
+description: |
+  A new post by hswerdfe
+author:
+  - name: Howard Swerdfeger
+    url: https://hswerdfe.github.io/docs/
+link:
+  - name: Howard Swerdfeger
+    url: https://hswerdfe.github.io/docs/
+date: "2023-03-22"
+output: distill::distill_article
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+
+```
+
+```{r, out.width="25%"}
+knitr::include_graphics("img/tt.jpg")
+```
+
+
+```{r share_top}
+library(magrittr)
+library(ggrepel)
+library(plotly)
+library(tidyverse)
+library(here)
+source('../share.R')
+
+htmltools::p('Share on, ',
+share_img(glue_url = share_df$glue_url, image = share_df$img, title = share_df$alt) |>
+  htmltools::span())
+```
+
+
+# Just playing around with todays Tidy Tuesday dataset:
+
+## Load the Data
+
+```{r library_load, echo=TRUE}
+languages <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-03-21/languages.csv')
+
+```
+
+## Set some Theme stuff
+
+```{r}
+theme_set(theme_minimal())
+```
+
+## Simple Bar Plot
+
+
+```{r echo=TRUE, fig.align = "center", out.width="1500", out.height="800"}
+p_dat <- 
+  languages |> 
+  #count(pldb_id , sort = TRUE) |> 
+  select(pldb_id, title, github_language_repos, github_language_type) |> 
+  filter(!is.na(github_language_repos)) |>
+  group_by(github_language_type) |> 
+  mutate(pldb_id = fct_reorder(pldb_id, github_language_repos)) |> 
+  mutate(pldb_id = fct_lump(pldb_id, n =9, w = github_language_repos)) |> 
+  #ungroup() |> count()
+  group_by(github_language_type, pldb_id) |> 
+  summarise(github_language_repos = sum(github_language_repos)) |> 
+  mutate(lbl = glue::glue('{pldb_id} ({str_squish(format(github_language_repos, big.mark = ","))})'))
+
+p_dat_facet <- 
+  p_dat |> 
+  group_by(github_language_type) |> 
+  summarise(github_language_repos_sum  = sum(github_language_repos),
+            github_language_repos = max(github_language_repos)/2) |> 
+  mutate(lbl = glue::glue('{github_language_type}\n({str_squish(format(round(github_language_repos), big.mark = ","))})'))
+
+p_dat |> 
+  ggplot(aes(x = github_language_repos, y = pldb_id, fill = github_language_type, color = github_language_type)) +
+  facet_wrap(~ github_language_type, scales = 'free', ncol = 1) + 
+  geom_text(aes(label = lbl), x = 0, hjust  = 'left', color = 'black') +
+  geom_text(data = p_dat_facet, mapping = aes(label = lbl, x = github_language_repos), y = 5,  alpha = 0.5, size = 10) +
+  geom_col(alpha = 0.25) +
+  guides(fill =  'none', color = 'none') +
+  labs(title = 'Most Popular Languages', subtitle = 'by Language Type (as measured by github repos)', x = '', y = '') +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        plot.title=element_text(size=25, hjust=0.5, face="bold", colour="grey", vjust=-1),
+        plot.subtitle = element_text(size=15, hjust=0.5, face="bold", colour="grey", vjust=-1),        
+        plot.caption =element_text(size=18, hjust=0.5, face="italic", color="black"),
+        strip.text = element_blank()
+        )
+```
+
+
+## X-Y plot of jobs vs users, and things "I know"
+
+
+
+```{r xyplot, echo=TRUE}
+
+I_know_well <- c('Python','R','SQL', 'SQLite', 'PostgreSQL')
+have_worked_with <- c('Java', 'Visual Basic','Fortran', 'C','C++', 'Perl', 'MySQL','Microsoft SQL Server','XML','JSON', 'JavaScript')
+
+p <-
+languages |> 
+  select(title, number_of_jobs, number_of_users) |> 
+  #filter(str_detect(title,regex('java', ignore_case = TRUE)))
+  mutate(I_know = title %in% c(I_know_well, have_worked_with) ) |> 
+  ggplot(aes(x = number_of_jobs, y = number_of_users, label = title, color = I_know)) +
+  geom_point() +
+  labs(x = 'Number of Jobs (log scale)', y = 'Number of Users (log scale)', color = 'hswerdfe Knows') +
+  scale_x_log10() +  
+  scale_y_log10()
+  
+  
+
+ggplotly(p)
+
+
+```
+
+
